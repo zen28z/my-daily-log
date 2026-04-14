@@ -9,8 +9,8 @@ import yfinance as yf
 from numpy.linalg import eigh
 from datetime import datetime, timedelta
 import warnings
-import json
-import os
+import json  # 追加：JSON保存用
+import os    # 追加：フォルダ作成用
 
 warnings.filterwarnings("ignore")
 
@@ -18,25 +18,29 @@ warnings.filterwarnings("ignore")
 # 設定
 # ============================================================
 
+# 米国ETFティッカー（11銘柄）
 US_TICKERS = ["XLB", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY", "XLC"]
+# 日本ETFティッカー（17銘柄）
 JP_TICKERS = [f"{i}.T" for i in range(1617, 1634)]
 
 ALL_TICKERS = US_TICKERS + JP_TICKERS
-N_US = len(US_TICKERS)
-N_JP = len(JP_TICKERS)
-N = N_US + N_JP
+N_US = len(US_TICKERS)   # 11
+N_JP = len(JP_TICKERS)   # 17
+N = N_US + N_JP          # 28
 
-WINDOW = 60
-LAMBDA = 0.9
-K = 3
-Q = 0.30
+# ハイパーパラメータ
+WINDOW = 60        # 推定ウィンドウ（営業日）
+LAMBDA = 0.9       # 正則化強度
+K = 3              # 上位固有ベクトル数（共通ファクター数）
+Q = 0.30           # ロング・ショートの分位点（上下30%）
 
+# シクリカル/ディフェンシブラベル（論文 Section 4.1）
 US_CYCLICAL   = {"XLB", "XLE", "XLF", "XLRE"}
 US_DEFENSIVE  = {"XLK", "XLP", "XLU", "XLV"}
 JP_CYCLICAL   = {"1618.T", "1625.T", "1629.T", "1631.T"}
 JP_DEFENSIVE  = {"1617.T", "1621.T", "1627.T", "1630.T"}
 
-# 日本ETFのセクター名マッピング（ダッシュボード表示用）
+# 画面表示用：日本ETFのセクター名（追加）
 JP_ETF_NAMES = {
     "1617.T": "食品", "1618.T": "エネルギー資源", "1619.T": "建設・資材",
     "1620.T": "素材・化学", "1621.T": "医薬品", "1622.T": "自動車・輸送機",
@@ -47,19 +51,27 @@ JP_ETF_NAMES = {
 }
 
 # ============================================================
-# 計算ロジック（Step 0 ～ 6 は元のまま）
+# Step 0: データ取得
 # ============================================================
 
 def fetch_data(tickers: list, days: int = 120) -> pd.DataFrame:
     end_date = datetime.today()
     start_date = end_date - timedelta(days=days * 2)
+
+    print(f"データ取得中... ({start_date.date()} ～ {end_date.date()})")
     raw = yf.download(tickers, start=start_date, end=end_date, auto_adjust=True, progress=False)["Close"]
     raw = raw.reindex(columns=tickers)
     returns = raw.pct_change().dropna(how="all")
     returns = returns.dropna(how="any")
+
+    print(f"  有効営業日数: {len(returns)} 日")
     return returns
 
-def standardize(returns_window: pd.DataFrame):
+# ============================================================
+# Step 1: 前処理 — 標準化リターン（Zスコア）
+# ============================================================
+
+def standardize(returns_window: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]:
     window = returns_window.iloc[:-1]
     today  = returns_window.iloc[-1]
     mu    = window.mean()
@@ -79,6 +91,10 @@ def compute_correlation_matrix(returns_window: pd.DataFrame) -> np.ndarray:
     d[d == 0] = 1.0
     C = C / np.outer(d, d)
     return C
+
+# ============================================================
+# Step 2: 事前部分空間 V0 の構築
+# ============================================================
 
 def gram_schmidt(vectors: np.ndarray) -> np.ndarray:
     basis = []
@@ -105,6 +121,10 @@ def build_prior_subspace(tickers: list) -> np.ndarray:
     V0 = gram_schmidt(raw_mat)
     return V0
 
+# ============================================================
+# Step 3: 事前エクスポージャー行列 C0 の構築
+# ============================================================
+
 def build_C0(V0: np.ndarray, C_full: np.ndarray) -> np.ndarray:
     D0 = np.diag(np.diag(V0.T @ C_full @ V0))
     C0_raw = V0 @ D0 @ V0.T
@@ -114,6 +134,10 @@ def build_C0(V0: np.ndarray, C_full: np.ndarray) -> np.ndarray:
     np.fill_diagonal(C0, 1.0)
     return C0
 
+# ============================================================
+# Step 4: 部分空間正則化PCA
+# ============================================================
+
 def subspace_regularized_pca(Ct: np.ndarray, C0: np.ndarray, lam: float = LAMBDA, k: int = K) -> np.ndarray:
     C_reg = (1 - lam) * Ct + lam * C0
     eigenvalues, eigenvectors = eigh(C_reg)
@@ -121,12 +145,20 @@ def subspace_regularized_pca(Ct: np.ndarray, C0: np.ndarray, lam: float = LAMBDA
     V_k = eigenvectors[:, idx[:k]]
     return V_k
 
+# ============================================================
+# Step 5: シグナル生成
+# ============================================================
+
 def compute_signal(V_k: np.ndarray, z_u_today: np.ndarray) -> np.ndarray:
     V_U = V_k[:N_US, :]
     V_J = V_k[N_US:, :]
     f = V_U.T @ z_u_today
     signal_jp = V_J @ f
     return signal_jp
+
+# ============================================================
+# Step 6: ロング・ショート銘柄の決定
+# ============================================================
 
 def select_portfolio(signal_jp: np.ndarray, jp_tickers: list, q: float = Q) -> tuple[list, list]:
     n = len(signal_jp)
@@ -139,21 +171,35 @@ def select_portfolio(signal_jp: np.ndarray, jp_tickers: list, q: float = Q) -> t
     return long_tickers, short_tickers
 
 # ============================================================
-# メイン処理 ＆ JSON保存
+# メイン処理
 # ============================================================
 
 def run_strategy():
+    print("=" * 60)
+    print("日米業種リードラグ投資戦略（部分空間正則化PCA）")
+    print("=" * 60)
+
+    # ---- データ取得 ----
     returns = fetch_data(ALL_TICKERS, days=120)
+
     if len(returns) < WINDOW + 5:
-        print(f"[ERROR] データが不足しています。")
+        print(f"[ERROR] データが不足しています（{len(returns)}日分）。")
         return
 
+    # 直近WINDOW+1日分を使用
     returns_window = returns.iloc[-(WINDOW + 1):]
+
+    # ---- Step 1: 当日標準化リターン ----
     z_today, mu, sigma = standardize(returns_window)
     z_u_today = z_today[US_TICKERS].fillna(0.0).values
+
+    # ---- Step 1: ウィンドウ内相関行列 Ct ----
     Ct = compute_correlation_matrix(returns_window)
+
+    # ---- Step 2: 事前部分空間 V0 ----
     V0 = build_prior_subspace(ALL_TICKERS)
 
+    # ---- Step 3: 長期相関行列（全データ使用）と C0 ----
     all_window = returns.copy()
     mu_full    = all_window.mean()
     sigma_full = all_window.std(ddof=1).replace(0, np.nan)
@@ -166,27 +212,59 @@ def run_strategy():
     np.fill_diagonal(C_full, 1.0)
 
     C0 = build_C0(V0, C_full)
+
+    # ---- Step 4: 部分空間正則化PCA ----
     V_k = subspace_regularized_pca(Ct, C0, lam=LAMBDA, k=K)
+
+    # ---- Step 5: シグナル生成 ----
     signal_jp = compute_signal(V_k, z_u_today)
-    
+    signal_series = pd.Series(signal_jp, index=JP_TICKERS)
+
+    # ---- Step 6: ロング・ショート決定 ----
     long_tickers, short_tickers = select_portfolio(signal_jp, JP_TICKERS, q=Q)
 
-    # ==== ここからダッシュボード用JSON出力処理 ====
-    # 日本時間の取得
+    # ---- ターミナル出力（GitHub Actionsのログ確認用） ----
+    today_str = returns_window.index[-1].strftime("%Y-%m-%d")
+    print(f"\n使用した米国データの最終日（当日）: {today_str}")
+    print(f"ウィンドウ: 過去{WINDOW}営業日 / λ={LAMBDA} / K={K} / q={Q}")
+
+    print("\n" + "=" * 60)
+    print(f"📈 明日【ロング（買い）】すべき日本ETF （上位{int(Q*100)}%）")
+    print("=" * 60)
+    for t in long_tickers:
+        print(f"  {t}  スコア: {signal_series[t]:+.4f}")
+
+    print("\n" + "=" * 60)
+    print(f"📉 明日【ショート（空売り）】すべき日本ETF （下位{int(Q*100)}%）")
+    print("=" * 60)
+    for t in short_tickers:
+        print(f"  {t}  スコア: {signal_series[t]:+.4f}")
+
+    print("\n" + "=" * 60)
+    print("全銘柄の予測スコア（降順）")
+    print("=" * 60)
+    sorted_signal = signal_series.sort_values(ascending=False)
+    for ticker, score in sorted_signal.items():
+        print(f"  {ticker}  {score:+.4f}")
+
+    # ============================================================
+    # 【追加】 GitHub Pages ダッシュボード用の JSON 出力処理
+    # ============================================================
+    
+    # 日本時間 (JST) で時刻を取得
     jst_now = datetime.utcnow() + timedelta(hours=9)
     date_str = jst_now.strftime("%Y-%m-%d")
     time_label = jst_now.strftime("%m月%d日 朝%H時%M分")
 
-    # ダッシュボード用に銘柄と名前を結合
+    # セクター名を紐付けながら辞書型に変換
     long_data = [{"code": t, "name": JP_ETF_NAMES.get(t, "不明")} for t in long_tickers]
     short_data = [{"code": t, "name": JP_ETF_NAMES.get(t, "不明")} for t in short_tickers]
 
+    # 保存先のパス設定（dataフォルダ）
     file_path = 'data/logs.json'
-    
-    # dataフォルダが存在しない場合は作成
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
-    # 既存のログを読み込み
+    # 既存のデータを読み込み
     logs = []
     if os.path.exists(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -195,7 +273,7 @@ def run_strategy():
             except json.JSONDecodeError:
                 pass
 
-    # 新しい結果を追加
+    # 新しい結果をリストの最後に追加
     logs.append({
         "date": date_str,
         "time": time_label,
@@ -203,11 +281,16 @@ def run_strategy():
         "short": short_data
     })
 
-    # 最新の50件（約10日分）を保存
+    # JSONファイルに書き出し（最新の50件のみ保持して容量肥大化を防ぐ）
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(logs[-50:], f, ensure_ascii=False, indent=2)
     
-    print(f"{time_label} のシグナルを logs.json に保存しました。")
+    print("\n" + "=" * 60)
+    print(f"[SUCCESS] {time_label} のシグナルを logs.json に保存しました！")
+    print("=" * 60)
+
+    return long_tickers, short_tickers, signal_series
+
 
 if __name__ == "__main__":
     run_strategy()
