@@ -22,7 +22,7 @@ jobs:
 
       - name: Run code
         run: |
-          # ここで「とあるコード」を実行し、結果をlogs.jsonなどに追記するスクリプトを走らせる
+          pip install numpy pandas yfinance
           python run_task.py 
 
       - name: Commit and Push
