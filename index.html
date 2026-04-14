@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>実行ログ・ダッシュボード</title>
+    <style>
+        /* CSS: サイドバーとメインコンテンツのレイアウト */
+        body { font-family: sans-serif; display: flex; margin: 0; background: #f4f7f6; }
+        #sidebar { width: 300px; height: 100vh; background: #fff; border-right: 1px solid #ddd; overflow-y: auto; padding: 20px; }
+        #content { flex: 1; padding: 40px; }
+        .log-entry { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .calendar-nav { margin-bottom: 20px; }
+        .time-list { list-style: none; padding: 0; }
+        .time-list li { padding: 10px; cursor: pointer; border-bottom: 1px solid #eee; }
+        .time-list li:hover { background: #e9ecef; }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <h3>カレンダー</h3>
+        <input type="date" id="datePicker" class="calendar-nav">
+        <h3>実行時間（目次）</h3>
+        <ul id="timeList" class="time-list"></ul>
+    </div>
+    <div id="content">
+        <h2 id="logTitle">日付を選択してください</h2>
+        <div id="logContent" class="log-entry">実行結果がここに表示されます。</div>
+    </div>
+
+    <script>
+        // JS: logs.jsonを読み込んで動的に表示を切り替える
+        let allLogs = [];
+        fetch('data/logs.json').then(res => res.json()).then(data => {
+            allLogs = data;
+            // 初期表示処理など
+        });
+
+        document.getElementById('datePicker').addEventListener('change', (e) => {
+            const selectedDate = e.target.value;
+            const dailyLogs = allLogs.filter(log => log.date === selectedDate);
+            const list = document.getElementById('timeList');
+            list.innerHTML = dailyLogs.map(log => `<li onclick="showLog('${log.time}', '${log.content}')">${log.time}</li>`).join('');
+        });
+
+        function showLog(time, content) {
+            document.getElementById('logTitle').innerText = time;
+            document.getElementById('logContent').innerText = content;
+        }
+    </script>
+</body>
+</html>
