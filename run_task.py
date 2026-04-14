@@ -55,13 +55,18 @@ JP_ETF_NAMES = {
 # ============================================================
 
 def fetch_data(tickers: list, days: int = 120) -> pd.DataFrame:
-    end_date = datetime.today()
-    start_date = end_date - timedelta(days=days * 2)
-
-    print(f"データ取得中... ({start_date.date()} ～ {end_date.date()})")
-    raw = yf.download(tickers, start=start_date, end=end_date, auto_adjust=True, progress=False)["Close"]
+    print("データ取得中...")
+    
+    # タイムゾーンのズレを回避するため、日付指定ではなく「直近1年分(1y)」を自動取得させる
+    raw = yf.download(tickers, period="1y", auto_adjust=True, progress=False)["Close"]
+    
+    # カラム順をALL_TICKERSに揃える
     raw = raw.reindex(columns=tickers)
+
+    # 日次リターン（Close-to-Close）
     returns = raw.pct_change().dropna(how="all")
+
+    # 両市場で共通に観測できる営業日のみ使用
     returns = returns.dropna(how="any")
 
     print(f"  有効営業日数: {len(returns)} 日")
