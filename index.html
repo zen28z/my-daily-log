@@ -14,6 +14,7 @@
         .time-item { padding: 12px; border-radius: 6px; cursor: pointer; margin-bottom: 5px; transition: 0.2s; border-left: 4px solid transparent; }
         .time-item:hover { background: #f8f9fa; }
         .time-item.active { background: #eef2ff; border-left-color: #4f46e5; font-weight: bold; }
+        select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem; }
 
         /* メインコンテンツ */
         #main { flex: 1; padding: 40px; overflow-y: auto; }
@@ -25,7 +26,11 @@
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         th { text-align: left; color: #666; font-size: 0.8rem; padding: 8px; border-bottom: 1px solid #eee; }
         td { padding: 12px 8px; border-bottom: 1px solid #f9f9f9; }
-        .code { font-weight: bold; font-family: monospace; font-size: 1.1rem; }
+        
+        /* リンクの装飾 */
+        .code a { font-weight: bold; font-family: monospace; font-size: 1.1rem; color: #4f46e5; text-decoration: none; padding: 4px 8px; background: #f3f4f6; border-radius: 4px; transition: 0.2s; }
+        .code a:hover { background: #e0e7ff; color: #3730a3; text-decoration: underline; }
+        
         .badge { padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; color: #fff; }
         .bg-long { background: var(--buy-color); }
         .bg-short { background: var(--sell-color); }
@@ -41,8 +46,15 @@
 
 <div id="sidebar">
     <div class="nav-section">
+        <h3>🔗 証券会社リンク</h3>
+        <select id="brokerSelect">
+            <option value="rakuten">楽天証券</option>
+            <option value="yahoo">Yahoo!ファイナンス</option>
+        </select>
+    </div>
+    <div class="nav-section">
         <h3>📅 日付選択</h3>
-        <input type="date" id="datePicker" style="width: 100%; padding: 8px;">
+        <input type="date" id="datePicker" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
     </div>
     <div class="nav-section">
         <h3>🕒 実行時刻（目次）</h3>
@@ -51,8 +63,8 @@
 </div>
 
 <div id="main">
-    <h2 id="displayTitle">ログを選択してください</h2>
-    <p id="displayStrategy" style="color: #666; margin-bottom: 20px;"></p>
+    <h2 id="displayTitle">データ取得中...</h2>
+    <p id="displayStrategy" style="color: #666; margin-bottom: 20px;">戦略：翌営業日 寄付きエントリー / 大引け決済</p>
 
     <div class="card-container">
         <div class="card long">
@@ -75,16 +87,36 @@
 
 <script>
     let allLogs = [];
+    let currentLog = null; // 現在表示しているログを記憶
+
+    // 【修正①】キャッシュ対策：URLの後ろに現在の時間をくっつけて、常に最新を取得させる
+    const jsonUrl = 'data/logs.json?v=' + new Date().getTime();
 
     // データの読み込み
-    fetch('data/logs.json').then(res => res.json()).then(data => {
-        allLogs = data.reverse(); // 新しい順に
-        const latest = allLogs[0];
-        if(latest) {
-            document.getElementById('datePicker').value = latest.date;
-            updateTimeList(latest.date);
-            renderLog(latest);
-        }
+    fetch(jsonUrl)
+        .then(res => {
+            if (!res.ok) throw new Error('Network response was not ok');
+            return res.json();
+        })
+        .then(data => {
+            allLogs = data.reverse(); // 新しい順に
+            const latest = allLogs[0];
+            if(latest) {
+                document.getElementById('datePicker').value = latest.date;
+                updateTimeList(latest.date);
+                renderLog(latest);
+            } else {
+                document.getElementById('displayTitle').innerText = "まだデータがありません";
+            }
+        })
+        .catch(err => {
+            console.error("データの読み込みに失敗しました:", err);
+            document.getElementById('displayTitle').innerText = "データの読み込みに失敗しました。";
+        });
+
+    // 証券会社が切り替わった時に、画面を再描画する
+    document.getElementById('brokerSelect').addEventListener('change', () => {
+        if(currentLog) renderLog(currentLog);
     });
 
     document.getElementById('datePicker').addEventListener('change', (e) => {
@@ -104,16 +136,30 @@
         if(log) renderLog(log);
     }
 
+    // 選択された証券会社のURLを生成する機能
+    function getStockUrl(code) {
+        const broker = document.getElementById('brokerSelect').value;
+        if (broker === 'rakuten') {
+            return `https://www.rakuten-sec.co.jp/web/market/search/quote.html?ric=${code}`;
+        } else {
+            return `https://finance.yahoo.co.jp/quote/${code}`;
+        }
+    }
+
     function renderLog(log) {
+        currentLog = log; // 現在のログを記憶
         document.getElementById('displayTitle').innerText = log.time;
-        document.getElementById('displayStrategy').innerText = "戦略：翌営業日 寄付きエントリー / 大引け決済";
         
-        // テーブルの描画
+        // 【修正②】テーブルの描画時に <a> タグを使ってリンクにする
         const renderTable = (data, targetId) => {
             const tbody = document.getElementById(targetId);
             tbody.innerHTML = data.map(item => `
                 <tr>
-                    <td class="code">${item.code}</td>
+                    <td class="code">
+                        <a href="${getStockUrl(item.code)}" target="_blank" rel="noopener noreferrer">
+                            ${item.code}
+                        </a>
+                    </td>
                     <td>${item.name}</td>
                 </tr>
             `).join('');
