@@ -256,6 +256,10 @@ def run_strategy():
     # 【追加】 GitHub Pages ダッシュボード用の JSON 出力処理
     # ============================================================
     
+    # ============================================================
+    # 【追加】 GitHub Pages ダッシュボード用の JSON 出力処理
+    # ============================================================
+    
     # 日本時間 (JST) で時刻を取得
     jst_now = datetime.utcnow() + timedelta(hours=9)
     date_str = jst_now.strftime("%Y-%m-%d")
@@ -265,33 +269,43 @@ def run_strategy():
     long_data = [{"code": t, "name": JP_ETF_NAMES.get(t, "不明")} for t in long_tickers]
     short_data = [{"code": t, "name": JP_ETF_NAMES.get(t, "不明")} for t in short_tickers]
 
-    # 保存先のパス設定（dataフォルダ）
-    file_path = 'data/logs.json'
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    # 今回保存する最新のデータ
+    new_data = {
+        "date": date_str,
+        "time": time_label,
+        "long": long_data,
+        "short": short_data
+    }
 
-    # 既存のデータを読み込み
+    # 保存先のパス設定（dataフォルダ）
+    os.makedirs('data', exist_ok=True)
+
+    # --------------------------------------------------
+    # ① 履歴用：logs.json（最新50件を保持・変更なし）
+    # --------------------------------------------------
+    logs_file_path = 'data/logs.json'
     logs = []
-    if os.path.exists(file_path):
-        with open(file_path, 'r', encoding='utf-8') as f:
+    if os.path.exists(logs_file_path):
+        with open(logs_file_path, 'r', encoding='utf-8') as f:
             try:
                 logs = json.load(f)
             except json.JSONDecodeError:
                 pass
 
-    # 新しい結果をリストの最後に追加
-    logs.append({
-        "date": date_str,
-        "time": time_label,
-        "long": long_data,
-        "short": short_data
-    })
+    logs.append(new_data)
 
-    # JSONファイルに書き出し（最新の50件のみ保持して容量肥大化を防ぐ）
-    with open(file_path, 'w', encoding='utf-8') as f:
+    with open(logs_file_path, 'w', encoding='utf-8') as f:
         json.dump(logs[-50:], f, ensure_ascii=False, indent=2)
+
+    # --------------------------------------------------
+    # ② 最新用：log.json（常に最新の1件だけを上書き保存）
+    # --------------------------------------------------
+    log_file_path = 'data/log.json'
+    with open(log_file_path, 'w', encoding='utf-8') as f:
+        json.dump(new_data, f, ensure_ascii=False, indent=2)
     
     print("\n" + "=" * 60)
-    print(f"[SUCCESS] {time_label} のシグナルを logs.json に保存しました！")
+    print(f"[SUCCESS] {time_label} のシグナルを logs.json と log.json に保存しました！")
     print("=" * 60)
 
     return long_tickers, short_tickers, signal_series
